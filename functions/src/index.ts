@@ -65,8 +65,9 @@ export const LastWeeksData = onRequest((request, response) => {
   const os = ["linux", "windows", "macos", "android", "ios"];
 
   const promises = [];
-  for (const date of dates) {
-    const jsonObj = JSON.parse(`{
+  for (let numOfDocsPerUser = 0; numOfDocsPerUser < 10; numOfDocsPerUser++) {
+    for (const date of dates) {
+      const jsonObj = JSON.parse(`{
       "date": "${date}",
       "userId": "${userId}",
       "public": true,
@@ -104,8 +105,9 @@ export const LastWeeksData = onRequest((request, response) => {
       ]
     }`);
 
-    const promise = db.collection(colpath).add(jsonObj);
-    promises.push(promise);
+      const promise = db.collection(colpath).add(jsonObj);
+      promises.push(promise);
+    }
   }
   Promise.all(promises)
     .then(() => {
@@ -136,11 +138,11 @@ export const LeaderboardData = onRequest((request, response) => {
     "userId": "${userId}",
     "CategoryTotals" : {
       "${categories[Math.floor(Math.random() * categories.length)]}":
-       ${Math.floor(Math.random() * 100000)},
+       ${Math.floor(Math.random() * 0.5 * 60* 60 * 24)},
       "${categories[Math.floor(Math.random() * categories.length)]}":
-        ${Math.floor(Math.random() * 100000)},
+        ${Math.floor(Math.random() * 0.5 * 60 * 60 * 24)},
       "${categories[Math.floor(Math.random() * categories.length)]}":
-        ${Math.floor(Math.random() * 100000)}
+        ${Math.floor(Math.random() * 0.5 * 60 * 60 * 24)},
     }
   }`);
     const promise = db.collection(colpath).doc(userId).set(jsonObj);
