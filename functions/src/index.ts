@@ -41,6 +41,29 @@ exports.CalculateCategoryTotals = onDocumentCreated(
       error("Error updating total: ", error);
     });
   });
+exports.UpdateCategoryTotals = onDocumentUpdated(
+  "leaderboard/{userId}", (event) => {
+    logger.info("Updating totals on document update");
+    const snapshot = event.data;
+    if (!snapshot) {
+      logger.error("Document does not exist");
+      return;
+    }
+    const data = snapshot.after.data();
+    const categoriesTotals = data.CategoryTotals as { [key: string]: number };
+    let total = 0;
+    for (const category in categoriesTotals) {
+      /* eslint guard-for-in: 1 */
+      total += categoriesTotals[category];
+    }
+    const db = admin.firestore();
+    const colpath = "leaderboard";
+    db.collection(colpath).doc(snapshot.after.id).update({total: total}).then(() => {
+      logger.info("Total updated");
+    }).catch((error) => {
+      logger.error("Error updating total: ", error);
+    });
+  });
 
 export const LastWeeksData = onRequest((request, response) => {
   const db = admin.firestore();
