@@ -142,7 +142,7 @@ export const LeaderboardData = onRequest((request, response) => {
       "${categories[Math.floor(Math.random() * categories.length)]}":
         ${Math.floor(Math.random() * 0.5 * 60 * 60 * 24)},
       "${categories[Math.floor(Math.random() * categories.length)]}":
-        ${Math.floor(Math.random() * 0.5 * 60 * 60 * 24)},
+        ${Math.floor(Math.random() * 0.5 * 60 * 60 * 24)}
     }
   }`);
     const promise = db.collection(colpath).doc(userId).set(jsonObj);
