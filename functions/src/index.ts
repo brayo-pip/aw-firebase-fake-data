@@ -1,7 +1,9 @@
 import {onRequest} from "firebase-functions/v2/https";
+import { onCall } from "firebase-functions/v2/https";
 import {onDocumentCreated} from "firebase-functions/v2/firestore";
 import * as admin from "firebase-admin";
-import {logger} from "firebase-functions/v1";
+import * as genKey from "generate-api-key";
+import { info,error } from "firebase-functions/logger";
 
 admin.initializeApp();
 let userId = "testUserId";
@@ -18,10 +20,10 @@ function generateRandomWord(length: number) {
 }
 exports.CalculateCategoryTotals = onDocumentCreated(
   "leaderboard/{userId}", (event) => {
-    logger.info("Calculating totals");
+    info("Calculating totals");
     const snapshot = event.data;
     if (!snapshot) {
-      logger.error("Document does not exist");
+      error("Document does not exist");
       return;
     }
     const data = snapshot.data();
@@ -34,9 +36,9 @@ exports.CalculateCategoryTotals = onDocumentCreated(
     const db = admin.firestore();
     const colpath = "leaderboard";
     db.collection(colpath).doc(snapshot.id).update({total: total}).then(() => {
-      logger.info("Total updated");
+      info("Total updated");
     }).catch((error) => {
-      logger.error("Error updating total: ", error);
+      error("Error updating total: ", error);
     });
   });
 
@@ -118,7 +120,7 @@ export const LastWeeksData = onRequest((request, response) => {
     });
 });
 
-export const LeaderboardData = onRequest((request, response) => {
+export const LeaderboardData= onRequest((request, response) => {
   const db = admin.firestore();
   const promises = [];
   const categories = [
@@ -132,7 +134,7 @@ export const LeaderboardData = onRequest((request, response) => {
   ];
   for (let i = 0; i < 10; i++) {
     userId = generateRandomWord(20);
-    logger.info("userId: ", userId);
+    info("userId: ", userId);
     const colpath = "leaderboard";
     const jsonObj = JSON.parse(`{
     "userId": "${userId}",
@@ -154,5 +156,82 @@ export const LeaderboardData = onRequest((request, response) => {
     })
     .catch(() => {
       response.send("error\n");
+    });
+});
+
+exports.generateApiKey = onCall((request) => {
+  // has to be authenticated
+  // check the user does not already have an api key
+  // if user has key, return that key
+  // else generate a new key and return it
+
+  if(!request.data.auth) {
+    error("Not authenticated");
+    return {error:"Not authenticated"};
+  }
+  const db = admin.firestore();
+  const colpath = "apiKeys";
+  const docpath = request.data.auth.uid;
+  const docref = db.collection(colpath).doc(docpath);
+  docref.get().then((doc) => {
+    if(doc.exists) {
+      const data = doc.data();
+      if(data && data.apiKey) {
+        return {apiKey: data.apiKey};
+      } else {
+        error("No apiKey found");
+        return {error: "No apiKey found"};
+      }
+    } else {
+      const apiKey = genKey.generateApiKey();
+      docref.set({apiKey: apiKey}).then(() => {
+        return {apiKey: apiKey};
+      }).catch((error) => {
+        error("Error setting document:", error);
+        return {error: error};
+      });
+      return {apiKey: apiKey}; // for all paths error fix
+  }}).catch((error) => {
+    error("Error generating ApiKey:", error);
+    return {error: error};
+  });
+  return {error: "Error"}; // for all paths error fix
+  }
+);
+
+exports.requestApiKey = onRequest((_, response) => {
+  /** only included for testing purposes */
+  const db = admin.firestore();
+  const colpath = "apiKeys";
+  const docpath = "testUserID4613";
+  const docref = db.collection(colpath).doc(docpath);
+
+  docref.get().then((doc) => {
+      if (doc.exists) {
+        const data = doc.data();
+        if (data && data.apiKey) {
+          response.send({ apiKey: data.apiKey });
+        } else {
+          error("No apiKey found");
+          response.send({ error: "No apiKey found" });
+        }
+      } else {
+        const apiKey = genKey.generateApiKey();
+        docref
+          .set({ apiKey: apiKey })
+          .then(() => {
+            info("ApiKey set and sent to client");
+            response.send({ apiKey: apiKey });
+          })
+          .catch((error) => {
+            error("Error setting document:", error);
+            response.send({ error: error });
+          });
+        response.send({ apiKey: apiKey }); // for all paths error fix
+      }
+    })
+    .catch((error) => {
+      error("Error generating ApiKey:", error);
+      response.send({ error: error });
     });
 });
