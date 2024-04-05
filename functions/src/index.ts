@@ -13,6 +13,24 @@ import {RawEvent, Event} from "./types";
 admin.initializeApp();
 let userId = "testUserId";
 
+exports.onUserCreated = functions.auth.user().onCreate((user) => {
+  info("User created: ", user.uid);
+  const db = admin.firestore();
+  const colpath = "users";
+  const docpath = user.uid;
+  const apiKey = genKey.generateApiKey();
+  const jsonObj = JSON.parse(`{"apiKey": "${apiKey}"}`);
+  return db.collection(colpath).doc(docpath).set(jsonObj);
+});
+
+exports.onUserDeleted = functions.auth.user().onDelete((user) => {
+  info("User deleted: ", user.uid);
+  const db = admin.firestore();
+  const colpath = "users";
+  const docpath = user.uid;
+  return db.collection(colpath).doc(docpath).delete();
+});
+
 // eslint-disable-next-line require-jsdoc
 function generateRandomString(length: number) {
   const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"+
@@ -197,7 +215,7 @@ export const getApiKey = functions.https.onCall(async (_, context) => {
     return {error: "Not authenticated"};
   }
   const db = admin.firestore();
-  const colpath = "apiKeys";
+  const colpath = "users";
   const docpath = context.auth?.uid;
   const docref = db.collection(colpath).doc(docpath);
   const doc = await docref.get();
@@ -209,6 +227,30 @@ export const getApiKey = functions.https.onCall(async (_, context) => {
     await docref.set({apiKey: apiKey});
     info("ApiKey set and sent to client");
     return {apiKey: apiKey};
+  }
+});
+export const rotateApiKey = functions.https.onCall(async (_, context) => {
+  /** A callable function only executed when the user is logged in */
+  info("Rotating ApiKey");
+  info("Request data: ", context);
+  if (!context.auth) {
+    error("Not authenticated");
+    return {error: "Not authenticated"};
+  }
+  const db = admin.firestore();
+  const colpath = "apiKeys";
+  const docpath = context.auth?.uid;
+  const docref = db.collection(colpath).doc(docpath);
+  const doc = await docref.get();
+  if (doc.exists && doc.data() && doc.data()?.apiKey) {
+    const apiKey = genKey.generateApiKey();
+    await docref.update({apiKey: apiKey});
+    info("ApiKey rotated and sent to client");
+    return {apiKey: apiKey};
+  } else {
+    await docref.set({apiKey: genKey.generateApiKey()});
+    info("ApiKey set and sent to client");
+    return {apiKey: doc.data()?.apiKey};
   }
 });
 
@@ -228,7 +270,7 @@ exports.uploadData = onRequest(async (request, response) => {
 
   const apiKey = request.body.apiKey;
   const db = admin.firestore();
-  const querySnapshot = await db.collection("apiKeys")
+  const querySnapshot = await db.collection("users")
     .where("apiKey", "==", apiKey)
     .get();
   info("QuerySnapshot: ", querySnapshot);
@@ -237,10 +279,11 @@ exports.uploadData = onRequest(async (request, response) => {
     response.status(403).send({error: "Invalid apiKey provided!"});
     return;
   }
+  const userId = querySnapshot.docs[0].id;
   const bucket = admin.storage().bucket();
   const dataToStore = request.body.data;
 
-  const filename = `${Date.now()}.json`;
+  const filename = `${userId}/${Date.now()}.json`;
   const file = bucket.file(filename);
   await file.save(dataToStore);
 
@@ -248,11 +291,12 @@ exports.uploadData = onRequest(async (request, response) => {
 });
 
 exports.onUploadData = onObjectFinalized(
-  {cpu: 1}, async (event) => {
+  {cpu: 4}, async (event) => {
     info("Processing uploaded data");
     const file = event.data;
     const bucket = admin.storage().bucket();
     const data = await bucket.file(file.name).download();
+    const userId = file.name.split("/")[0];
     const dataString = data.toString();
     const jsonData: [RawEvent] = JSON.parse(dataString);
     const db = admin.firestore();
