@@ -1,12 +1,14 @@
-import {onRequest, onCall} from "firebase-functions/v2/https";
+import {onRequest} from "firebase-functions/v2/https";
 import {
   onDocumentCreated,
   onDocumentUpdated,
 } from "firebase-functions/v2/firestore";
+import {onObjectFinalized} from "firebase-functions/v2/storage";
 import * as admin from "firebase-admin";
 import * as functions from "firebase-functions";
 import * as genKey from "generate-api-key";
-import {info, error, log} from "firebase-functions/logger";
+import {info, error} from "firebase-functions/logger";
+import {RawEvent, Event} from "./types";
 
 admin.initializeApp();
 let userId = "testUserId";
@@ -74,11 +76,11 @@ export const LastWeeksData = onRequest((request, response) => {
   const colpath = `screentime/${userId}/${userId}`;
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-  // every day since 7 days ago in 'DD-MM-YYYY' format
+  // every day since 7 days ago in 'YYYY-MM-DD' format
   const dates = Array.from({length: 7}, (_, i) => {
     const date = new Date(sevenDaysAgo);
     date.setDate(date.getDate() + i);
-    return date.toLocaleDateString("en-US");
+    return date.toISOString().split("T")[0].replace(/\//g, "-"); // Not yet tested
   });
 
   const categories = [
@@ -134,7 +136,7 @@ export const LastWeeksData = onRequest((request, response) => {
       ]
     }`);
 
-      const promise = db.collection(colpath).add(jsonObj);
+      const promise = db.collection(colpath).doc(date).set(jsonObj);
       promises.push(promise);
     }
   }
@@ -187,7 +189,7 @@ export const LeaderboardData= onRequest((request, response) => {
 });
 
 export const getApiKey = functions.https.onCall(async (_, context) => {
-  /**A callable function only executed when the user is logged in */
+  /** A callable function only executed when the user is logged in */
   info("Getting ApiKey");
   info("Request data: ", context);
   if (!context.auth) {
@@ -244,3 +246,41 @@ exports.uploadData = onRequest(async (request, response) => {
 
   response.send({message: "Data stored successfully!"});
 });
+
+exports.onUploadData = onObjectFinalized(
+  {cpu: 1}, async (event) => {
+    info("Processing uploaded data");
+    const file = event.data;
+    const bucket = admin.storage().bucket();
+    const data = await bucket.file(file.name).download();
+    const dataString = data.toString();
+    const jsonData: [RawEvent] = JSON.parse(dataString);
+    const db = admin.firestore();
+    const colpath = `screentime/${userId}/${userId}`;
+    const promises = [];
+    for (const rawEvent of jsonData) {
+      // reduce from type RawEvent to Event
+      const event:Event = {
+        timestamp: rawEvent.timestamp,
+        duration: rawEvent.duration,
+        data: rawEvent.data,
+      };
+      // check if a doc with the same date exists
+      // date in yyyy-mm-dd format
+      let date = new Date(event.timestamp).toISOString().split("T")[0];
+      date = date.replace(/\//g, "-");
+      const doc = await db.collection(colpath).doc(date).get();
+      if (doc.exists) {
+        const events = doc.data()?.events as Event[];
+        events.push(event);
+        const promise = db.collection(colpath).doc(date)
+          .update({events: events});
+        promises.push(promise);
+      } else {
+        const promise = db.collection(colpath).doc(date).set({events: [event]});
+        promises.push(promise);
+      }
+    }
+    await Promise.all(promises);
+    info("Data processed successfully");
+  });

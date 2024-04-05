@@ -1,0 +1,8 @@
+{
+  "projects": {
+    "fake-data": "aw-mockup",
+    "default": "aw-mockup"
+  },
+  "targets": {},
+  "etags": {}
+}

@@ -1,9 +1,14 @@
 export interface Event {
-  timestamp: number; // Unix timestamp
+  timestamp: string;
   duration: number;
   data: [];
 }
-
+export interface RawEvent {
+  id: number;
+  timestamp: string;
+  duration: number;
+  data: [];
+}
 // Screentime is stored in day-level objects that have
 // their `events` appended when new data is added.
 export interface ScreenTimeData {
