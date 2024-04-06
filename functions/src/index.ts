@@ -1,14 +1,11 @@
 import {onRequest} from "firebase-functions/v2/https";
-import {
-  onDocumentCreated,
-  onDocumentUpdated,
-} from "firebase-functions/v2/firestore";
 import {onObjectFinalized} from "firebase-functions/v2/storage";
+import {onSchedule} from "firebase-functions/v2/scheduler";
 import * as admin from "firebase-admin";
 import * as functions from "firebase-functions";
 import * as genKey from "generate-api-key";
 import {info, error} from "firebase-functions/logger";
-import {RawEvent, Event} from "./types";
+import {RawEvent, Event, defaultCategories} from "./types";
 
 admin.initializeApp();
 let userId = "testUserId";
@@ -41,53 +38,6 @@ function generateRandomString(length: number) {
   }
   return result;
 }
-exports.CalculateCategoryTotals = onDocumentCreated(
-  "leaderboard/{userId}", (event) => {
-    info("Calculating totals");
-    const snapshot = event.data;
-    if (!snapshot) {
-      error("Document does not exist");
-      return;
-    }
-    const data = snapshot.data();
-    const categoriesTotals = data.CategoryTotals as { [key: string]: number };
-    let total = 0;
-    for (const category in categoriesTotals) {
-      /* eslint guard-for-in: 1 */
-      total += categoriesTotals[category];
-    }
-    const db = admin.firestore();
-    const colpath = "leaderboard";
-    db.collection(colpath).doc(snapshot.id).update({total: total}).then(() => {
-      info("Total updated");
-    }).catch((error) => {
-      error("Error updating total: ", error);
-    });
-  });
-exports.UpdateCategoryTotals = onDocumentUpdated(
-  "leaderboard/{userId}", (event) => {
-    info("Updating totals on document update");
-    const snapshot = event.data;
-    if (!snapshot) {
-      error("Document does not exist");
-      return;
-    }
-    const data = snapshot.after.data();
-    const categoriesTotals = data.CategoryTotals as { [key: string]: number };
-    let total = 0;
-    for (const category in categoriesTotals) {
-      /* eslint guard-for-in: 1 */
-      total += categoriesTotals[category];
-    }
-    const db = admin.firestore();
-    const colpath = "leaderboard";
-    db.collection(colpath).doc(snapshot.after.id)
-      .update({total: total}).then(() => {
-        info("Total updated");
-      }).catch((error) => {
-        error("Error updating total: ", error);
-      });
-  });
 
 export const LastWeeksData = onRequest((request, response) => {
   const db = admin.firestore();
@@ -206,6 +156,59 @@ export const LeaderboardData= onRequest((request, response) => {
     });
 });
 
+export const UpdateLeaderboardData = onSchedule("every day 00:00", async (event) => {
+  // WIP
+    info("Updating leaderboard data");
+      const db = admin.firestore();
+      const destinationColpath = "leaderboard";
+      const screentimeColpath = "screentime/";
+      const screenTimeDocs = await db.collection(screentimeColpath).listDocuments();
+      let totals = new Map<string, number>();
+      const promises = [];
+      for (const userDoc of screenTimeDocs){
+        const sourceColpath = "screentime/" + userDoc.id + "/" + userDoc.id;
+        const screenTimeUserDocs = await db.collection(sourceColpath).listDocuments();
+        for (const screenTimeUserDoc of screenTimeUserDocs) {
+          const doc = await screenTimeUserDoc.get();
+          const events = doc.data()?.events as Event[];
+          // info("events: ", events);
+          totals.set("total", 0);
+          for (const event of events) {
+            const category = event.category.length > 0 ? event.category[0] as string : "Other";
+            // info("category: ", category)";
+            totals.set(category, (totals.get(category) || 0) + event.duration);
+            totals.set("total", (totals.get("total") || 0) + event.duration);
+          }
+        // const total = totals.get("Total");
+        const userId = (await screenTimeUserDoc.get()).data()?.userId;
+        const date = (await screenTimeUserDoc.get()).data()?.date;
+        totals.delete("total");
+        for (const [category, total] of totals.entries()) {
+          const docpath = date;
+          const docref = db.collection(destinationColpath).doc(docpath);
+          const doc = await docref.get();
+          if (doc.exists) {
+            const categoryTotals = doc.data()?.CategoryTotals as { [key: string]: number };
+            const keys  = Object.keys(categoryTotals);
+              if (keys.includes(category)) {
+                categoryTotals[category] += total;
+              } else {
+                categoryTotals[category] = total;
+              }
+            const promise = docref.update({CategoryTotals: categoryTotals, total: total + doc.data()?.total});
+            promises.push(promise);
+          } else {
+            const jsonObj = Object.fromEntries(totals);
+            const promise = docref.set({CategoryTotals: jsonObj, total: total, userId: userId, date: date});
+            promises.push(promise);
+          }
+        }
+      
+      } 
+      await Promise.all(promises);
+      }
+    }
+  );
 export const getApiKey = functions.https.onCall(async (_, context) => {
   /** A callable function only executed when the user is logged in */
   info("Getting ApiKey");
@@ -300,31 +303,53 @@ exports.onUploadData = onObjectFinalized(
     const dataString = data.toString();
     const jsonData: [RawEvent] = JSON.parse(dataString);
     const db = admin.firestore();
+    const batch = db.batch();
     const colpath = `screentime/${userId}/${userId}`;
     const promises = [];
+    const dateMap = new Map<string, Event[]>();
     for (const rawEvent of jsonData) {
       // reduce from type RawEvent to Event
+      let category = [] as string[];
+      for (const cat of defaultCategories) {
+        if (cat.rule.regex?.test(rawEvent.data?.app)) {
+          category = cat.name;
+          break;
+        }
+      }
       const event:Event = {
         timestamp: rawEvent.timestamp,
         duration: rawEvent.duration,
         data: rawEvent.data,
+        category: category,
       };
-      // check if a doc with the same date exists
-      // date in yyyy-mm-dd format
+
       let date = new Date(event.timestamp).toISOString().split("T")[0];
       date = date.replace(/\//g, "-");
-      const doc = await db.collection(colpath).doc(date).get();
-      if (doc.exists) {
-        const events = doc.data()?.events as Event[];
-        events.push(event);
-        const promise = db.collection(colpath).doc(date)
-          .update({events: events});
-        promises.push(promise);
-      } else {
-        const promise = db.collection(colpath).doc(date).set({events: [event]});
+            if (dateMap.has(date)) {
+              dateMap.get(date)?.push(event);
+          } else {
+              dateMap.set(date, [event]);
+          }
+    }
+      const dates = dateMap.entries();
+      for (const [date, events] of dates) {
+        const promise = db.collection(colpath).doc(date).get().then((doc) => {
+          if (doc.exists) {
+            const events = doc.data()?.events as Event[];
+            events.push(...events);
+            batch.update(doc.ref, {events: events});
+          } else {
+              batch.set(db.collection(colpath).doc(date), {
+              events: [...events],
+              userId: userId,
+              date: date,
+              public: true,
+            });
+          }
+        });
         promises.push(promise);
       }
-    }
     await Promise.all(promises);
+    await batch.commit();
     info("Data processed successfully");
   });
