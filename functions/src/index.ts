@@ -5,7 +5,7 @@ import * as admin from "firebase-admin";
 import * as functions from "firebase-functions";
 import * as genKey from "generate-api-key";
 import {info, error} from "firebase-functions/logger";
-import {RawEvent, Event, defaultCategories} from "./types";
+import {RawEvent, Event} from "./types";
 
 admin.initializeApp();
 let userId = "testUserId";
@@ -309,18 +309,11 @@ exports.onUploadData = onObjectFinalized(
     const dateMap = new Map<string, Event[]>();
     for (const rawEvent of jsonData) {
       // reduce from type RawEvent to Event
-      let category = [] as string[];
-      for (const cat of defaultCategories) {
-        if (cat.rule.regex?.test(rawEvent.data?.app)) {
-          category = cat.name;
-          break;
-        }
-      }
       const event:Event = {
         timestamp: rawEvent.timestamp,
         duration: rawEvent.duration,
         data: rawEvent.data,
-        category: category,
+        category: rawEvent.data.$category ? rawEvent.data.$category : "Uncategorized",
       };
 
       let date = new Date(event.timestamp).toISOString().split("T")[0];
