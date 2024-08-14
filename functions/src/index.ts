@@ -5,7 +5,7 @@ import * as admin from "firebase-admin";
 import * as functions from "firebase-functions";
 import * as genKey from "generate-api-key";
 import {info, error} from "firebase-functions/logger";
-import {RawEvent, Event} from "./types";
+import { RawEvent, Event, ScreenTimeData, ScreenTimeSummary } from "./types";
 
 admin.initializeApp();
 let userId = "testUserId";
@@ -156,59 +156,46 @@ export const LeaderboardData= onRequest((request, response) => {
     });
 });
 
-export const UpdateLeaderboardData = onSchedule("every day 00:00", async (event) => {
-  // WIP
-    info("Updating leaderboard data");
-      const db = admin.firestore();
-      const destinationColpath = "leaderboard";
-      const screentimeColpath = "screentime/";
-      const screenTimeDocs = await db.collection(screentimeColpath).listDocuments();
-      let totals = new Map<string, number>();
-      const promises = [];
-      for (const userDoc of screenTimeDocs){
-        const sourceColpath = "screentime/" + userDoc.id + "/" + userDoc.id;
-        const screenTimeUserDocs = await db.collection(sourceColpath).listDocuments();
-        for (const screenTimeUserDoc of screenTimeUserDocs) {
-          const doc = await screenTimeUserDoc.get();
-          const events = doc.data()?.events as Event[];
-          // info("events: ", events);
-          totals.set("total", 0);
-          for (const event of events) {
-            const category = event.category.length > 0 ? event.category[0] as string : "Other";
-            // info("category: ", category)";
-            totals.set(category, (totals.get(category) || 0) + event.duration);
-            totals.set("total", (totals.get("total") || 0) + event.duration);
-          }
-        // const total = totals.get("Total");
-        const userId = (await screenTimeUserDoc.get()).data()?.userId;
-        const date = (await screenTimeUserDoc.get()).data()?.date;
-        totals.delete("total");
-        for (const [category, total] of totals.entries()) {
-          const docpath = date;
-          const docref = db.collection(destinationColpath).doc(docpath);
-          const doc = await docref.get();
-          if (doc.exists) {
-            const categoryTotals = doc.data()?.CategoryTotals as { [key: string]: number };
-            const keys  = Object.keys(categoryTotals);
-              if (keys.includes(category)) {
-                categoryTotals[category] += total;
-              } else {
-                categoryTotals[category] = total;
-              }
-            const promise = docref.update({CategoryTotals: categoryTotals, total: total + doc.data()?.total});
-            promises.push(promise);
-          } else {
-            const jsonObj = Object.fromEntries(totals);
-            const promise = docref.set({CategoryTotals: jsonObj, total: total, userId: userId, date: date});
-            promises.push(promise);
-          }
-        }
-      
-      } 
-      await Promise.all(promises);
+export const UpdateLeaderboardData = onSchedule("every day 00:00", async () => {
+  info("Updating leaderboard data");
+  const db = admin.firestore();
+  const batch = db.batch();
+  const destinationColpath = "leaderboard";
+  const screentimeColpath = "screentime/";
+  const screenTimeDocs = await db.collection(screentimeColpath).listDocuments();
+  const promises = [];
+  const TotalsMap = new Map<string, number>();
+  for (const doc of screenTimeDocs) {
+    const userId: string = doc.id;
+    const userScreenTime = await db
+      .collection(screentimeColpath + userId + "/" + userId)
+      .listDocuments();
+    const events: Event[] = [];
+    for (const day of userScreenTime) {
+      const dayData = await day.get();
+      const dayDataJson = dayData.data();
+      if (dayDataJson?.events) {
+        events.push(...dayDataJson.events);
       }
     }
-  );
+    const screenTimeData: ScreenTimeData = {
+      userId,
+      events,
+      date: new Date().toISOString().split("T")[0],
+      public: true,
+    };
+    const summary = dataToSummary(screenTimeData);
+    TotalsMap.set(userId, summary.total);
+    const promise = batch.set(
+      db.collection(destinationColpath).doc(userId),
+      summary
+    );
+    promises.push(promise);
+  }
+  await Promise.all(promises);
+  await batch.commit();
+  info("Leaderboard data updated successfully");
+});
 export const getApiKey = functions.https.onCall(async (_, context) => {
   /** A callable function only executed when the user is logged in */
   info("Getting ApiKey");
@@ -346,3 +333,21 @@ exports.onUploadData = onObjectFinalized(
     await batch.commit();
     info("Data processed successfully");
   });
+
+function dataToSummary(data: ScreenTimeData): ScreenTimeSummary {
+  const total = data.events.reduce((acc, event) => acc + event.duration, 0);
+  const categoryTotals: { [key: string]: number } = {};
+  data.events.forEach((event) => {
+    const category = event.category[0] || "Uncategorized";
+    if (!categoryTotals[category]) {
+      categoryTotals[category] = 0;
+    }
+    categoryTotals[category] += event.duration;
+  });
+  return {
+    userId: data.userId,
+    total,
+    date: data.date,
+    categoryTotals,
+  };
+}
