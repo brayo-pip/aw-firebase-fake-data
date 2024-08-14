@@ -192,6 +192,16 @@ export const UpdateLeaderboardData = onSchedule("every day 00:00", async () => {
     );
     promises.push(promise);
   }
+ 
+  const sorted = new Map(
+    [...TotalsMap.entries()].sort((a, b) => b[1] - a[1])
+  );
+  for (const [userId, total] of sorted) {
+    const promise = db.collection(destinationColpath).doc(userId).update({
+      total,
+    });
+    promises.push(promise);
+  }
   await Promise.all(promises);
   await batch.commit();
   info("Leaderboard data updated successfully");
