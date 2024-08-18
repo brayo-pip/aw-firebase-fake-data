@@ -5,7 +5,7 @@ import * as admin from "firebase-admin";
 import * as functions from "firebase-functions";
 import * as genKey from "generate-api-key";
 import {info, error} from "firebase-functions/logger";
-import { RawEvent, Event, ScreenTimeData, ScreenTimeSummary } from "./types";
+import { RawEvent, Event, ScreenTimeData, ScreenTimeSummary, ScreenTimeSummaryRanked } from "./types";
 
 admin.initializeApp();
 let userId = "testUserId";
@@ -158,24 +158,25 @@ export const LeaderboardData= onRequest((request, response) => {
 
 export const UpdateLeaderboardData = onSchedule("every day 00:00", async () => {
   info("Updating leaderboard data");
-  const db = admin.firestore();
+  const db = admin.firestore()
   const batch = db.batch();
-  const destinationColpath = "leaderboard";
-  const screentimeColpath = "screentime/";
-  const screenTimeDocs = await db.collection(screentimeColpath).listDocuments();
-  const promises = [];
-  const TotalsMap = new Map<string, number>();
-  for (const doc of screenTimeDocs) {
-    const userId: string = doc.id;
-    const userScreenTime = await db
-      .collection(screentimeColpath + userId + "/" + userId)
+  const leaderboardColpath = "leaderboard";
+  const screentimeColpath = "screentime"
+  
+  // This is lightweight does not actually fetch the docs
+  const screentimeDocRefs = await db.collection(screentimeColpath).listDocuments();
+  const summariesMap = new Map<string, ScreenTimeSummary>();
+  const totalsMap = new Map<string, number>();
+  for (const docRef of screentimeDocRefs) {
+    const userId: string = docRef.id;
+    const userDocRefs = await db
+      .collection(screentimeColpath + "/" + userId + "/" + userId)
       .listDocuments();
     const events: Event[] = [];
-    for (const day of userScreenTime) {
-      const dayData = await day.get();
-      const dayDataJson = dayData.data();
-      if (dayDataJson?.events) {
-        events.push(...dayDataJson.events);
+    for (const dayDocRef of userDocRefs) {
+      const dayDocData = (await dayDocRef.get()).data()
+      if (dayDocData?.events) {
+        events.push(...dayDocData.events)
       }
     }
     const screenTimeData: ScreenTimeData = {
@@ -183,29 +184,32 @@ export const UpdateLeaderboardData = onSchedule("every day 00:00", async () => {
       events,
       date: new Date().toISOString().split("T")[0],
       public: true,
-    };
-    const summary = dataToSummary(screenTimeData);
-    TotalsMap.set(userId, summary.total);
-    const promise = batch.set(
-      db.collection(destinationColpath).doc(userId),
-      summary
-    );
-    promises.push(promise);
+    }
+    const summary = dataToSummary(screenTimeData)
+    summariesMap.set(userId, summary)
+    totalsMap.set(userId, summary.total)
+    const sorted = new Map(
+      [...summariesMap.entries()].sort((a,b) => b[1].total - a[1].total)
+    )
+    let rank = 1
+    for (const [userId, summary] of sorted) {
+      const rankedSummary: ScreenTimeSummaryRanked = {
+        ...summary,
+        rank: rank++,
+      }
+      batch.set(
+        db.collection(leaderboardColpath).doc(userId),
+        rankedSummary
+      )
+    }
   }
- 
-  const sorted = new Map(
-    [...TotalsMap.entries()].sort((a, b) => b[1] - a[1])
-  );
-  for (const [userId, total] of sorted) {
-    const promise = db.collection(destinationColpath).doc(userId).update({
-      total,
-    });
-    promises.push(promise);
+  try {
+    await batch.commit();
+    info("Leaderboard data updated successfully");
+  } catch (err) {
+    error(err);
   }
-  await Promise.all(promises);
-  await batch.commit();
-  info("Leaderboard data updated successfully");
-});
+})
 export const getApiKey = functions.https.onCall(async (_, context) => {
   /** A callable function only executed when the user is logged in */
   info("Getting ApiKey");
