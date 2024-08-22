@@ -38,14 +38,14 @@ function generateRandomString(length: number) {
   }
   return result;
 }
-
-export const LastWeeksData = onRequest((request, response) => {
+exports.fakeScreenTimeForUser = functions.auth.user().onCreate((user) => {
+  info("On fake user created", user.uid);
   const db = admin.firestore();
-  const colpath = `screentime/${userId}/${userId}`;
+  const colpath = `screentime/${user.uid}/${user.uid}`;
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   // every day since 7 days ago in 'YYYY-MM-DD' format
-  const dates = Array.from({length: 7}, (_, i) => {
+  const dates = Array.from({ length: 7 }, (_, i) => {
     const date = new Date(sevenDaysAgo);
     date.setDate(date.getDate() + i);
     return date.toISOString().split("T")[0].replace(/\//g, "-"); // Not yet tested
@@ -60,62 +60,61 @@ export const LastWeeksData = onRequest((request, response) => {
     "other",
     "productivity",
   ];
-  const awClients = ["aw-server", "aw-server-rust"];
-  const os = ["linux", "windows", "macos", "android", "ios"];
+   const awClients = ["aw-server", "aw-server-rust"];
+   const os = ["linux", "windows", "macos", "android", "ios"];
 
-  const promises = [];
-  for (let numOfDocsPerUser = 0; numOfDocsPerUser < 10; numOfDocsPerUser++) {
-    for (const date of dates) {
-      const jsonObj = JSON.parse(`{
+   const promises = [];
+   for (const date of dates) {
+    const jsonObj = JSON.parse(`{
       "date": "${date}",
       "userId": "${userId}",
       "public": true,
       "events": [
         {
           "timestamp": ${
-  Date.parse(date) + Math.floor(Math.random() * 1000 * 60 * 60 * 24)
-},
+            Date.parse(date) + Math.floor(Math.random() * 1000 * 60 * 60 * 24)
+          },
           "duration": ${Math.floor(Math.random() * 100000)},
+          "category": "${
+            categories[Math.floor(Math.random() * categories.length)]
+          }",
           "data": {
-            "category": "${
-  categories[Math.floor(Math.random() * categories.length)]
-}",
             "client": "${
-  awClients[Math.floor(Math.random() * awClients.length)]
-}",
+              awClients[Math.floor(Math.random() * awClients.length)]
+            }",
             "os": "${os[Math.floor(Math.random() * os.length)]}"
           }
         },
         {
           "timestamp": ${
-  Date.parse(date) + Math.floor(Math.random() * 1000 * 60 * 60 * 24)
-},
+            Date.parse(date) + Math.floor(Math.random() * 1000 * 60 * 60 * 24)
+          },
           "duration": ${Math.floor(Math.random() * 100000)},
+           "category": "${
+             categories[Math.floor(Math.random() * categories.length)]
+           }",
           "data": {
-            "category": "${
-  categories[Math.floor(Math.random() * categories.length)]
-}",
             "client": "${
-  awClients[Math.floor(Math.random() * awClients.length)]
-}",
+              awClients[Math.floor(Math.random() * awClients.length)]
+            }",
             "os": "${os[Math.floor(Math.random() * os.length)]}"
           }
         }
       ]
-    }`);
+      }`);
 
       const promise = db.collection(colpath).doc(date).set(jsonObj);
       promises.push(promise);
-    }
-  }
+   }
   Promise.all(promises)
-    .then(() => {
-      response.send("done\n");
-    })
-    .catch(() => {
-      response.send("error\n");
-    });
+   .then(() => {
+    info("successfully created fake data for user");
+   })
+   .catch(() => {
+    error("something went wrong creating fake data for user");
+   });
 });
+
 
 export const fakeLeaderboardData= onRequest((_, response) => {
   const db = admin.firestore();
@@ -257,7 +256,6 @@ export const rotateApiKey = functions.https.onCall(async (_, context) => {
     return {apiKey: doc.data()?.apiKey};
   }
 });
-
 exports.uploadData = onRequest(async (request, response) => {
   info("Storing data");
   info("Request data: ", request.body);
@@ -293,7 +291,6 @@ exports.uploadData = onRequest(async (request, response) => {
 
   response.send({message: "Data stored successfully!"});
 });
-
 exports.onUploadData = onObjectFinalized(
   {cpu: 4}, async (event) => {
     info("Processing uploaded data");
@@ -347,7 +344,6 @@ exports.onUploadData = onObjectFinalized(
     await batch.commit();
     info("Data processed successfully");
   });
-
 function dataToSummary(data: ScreenTimeData): ScreenTimeSummary {
   const total = data.events.reduce((acc, event) => acc + event.duration, 0);
   const categoryTotals: { [key: string]: number } = {};
