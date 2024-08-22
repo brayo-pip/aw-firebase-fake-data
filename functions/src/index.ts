@@ -117,7 +117,7 @@ export const LastWeeksData = onRequest((request, response) => {
     });
 });
 
-export const LeaderboardData= onRequest((request, response) => {
+export const fakeLeaderboardData= onRequest((_, response) => {
   const db = admin.firestore();
   const promises = [];
   const categories = [
