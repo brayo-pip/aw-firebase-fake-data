@@ -10,6 +10,20 @@ import { RawEvent, Event, ScreenTimeData, ScreenTimeSummary, ScreenTimeSummaryRa
 admin.initializeApp()
 let userId = "testUserId"
 
+export const createUsers = onRequest(async () => {
+  const users = 5
+  const promises = []
+  for (let i = 0 ;i < users; i++) {
+    const email = `user${i}@example.com`
+    const promise = admin.auth().createUser({
+      email: email,
+      password: "password",
+    })
+    promises.push(promise)
+  }
+  await Promise.all(promises)
+})
+
 exports.onUserCreated = functions.auth.user().onCreate((user) => {
   info("User created: ", user.uid)
   const db = admin.firestore()
