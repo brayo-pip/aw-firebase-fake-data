@@ -5,9 +5,11 @@ import * as admin from "firebase-admin"
 import * as functions from "firebase-functions"
 import * as genKey from "generate-api-key"
 import {info, error} from "firebase-functions/logger"
-import { RawEvent, Event, ScreenTimeData, ScreenTimeSummary, ScreenTimeSummaryRanked } from "./types"
+import {
+  RawEvent, Event, ScreenTimeData, ScreenTimeSummary, ScreenTimeSummaryRanked
+} from "./types"
 
-admin.initializeApp()
+admin.initializeApp();
 let userId = "testUserId"
 
 export const createUsers = onRequest(async () => {
@@ -48,86 +50,86 @@ function generateRandomString(length: number) {
   "abcdefghijklmnopqrstuvwxyz"+"123456789"
   let result = ""
   for (let i = 0; i < length; i++) {
-    result += characters.charAt(Math.floor(Math.random() * characters.length))
+    result += characters.charAt(
+      Math.floor(Math.random() * characters.length)
+    )
   }
   return result
 }
-exports.fakeScreenTimeForUser = functions.auth.user().onCreate((user) => {
-  info("On fake user created", user.uid)
-  const db = admin.firestore()
-  const colpath = `screentime/${user.uid}/${user.uid}`
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+exports.fakeScreenTimeForUser = functions.runWith({timeoutSeconds: 540, memory: "2GB"})
+  .auth.user().onCreate((user) => {
+    info("On fake user created", user.uid)
+    const db = admin.firestore()
+    const colpath = `screentime/${user.uid}/${user.uid}`
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
 
-  // every day since 7 days ago in 'YYYY-MM-DD' format
-  const dates = Array.from({ length: 7 }, (_, i) => {
-    const date = new Date(sevenDaysAgo)
-    date.setDate(date.getDate() + i)
-    return date.toISOString().split("T")[0].replace(/\//g, "-") // Not yet tested
-  })
+    // every day since 7 days ago in 'YYYY-MM-DD' format
+    const dates = Array.from({length: 7}, (_, i) => {
+      const date = new Date(sevenDaysAgo)
+      date.setDate(date.getDate() + i)
+      return date.toISOString().split("T")[0].replace(/\//g, "-") // Not yet tested
+    })
 
-  const categories = [
-    "music",
-    "video",
-    "programming",
-    "social",
-    "gaming",
-    "other",
-    "productivity",
-  ]
-   const awClients = ["aw-server", "aw-server-rust"]
-   const os = ["linux", "windows", "macos", "android", "ios"]
+    const categories = [
+      "music",
+      "video",
+      "programming",
+      "social",
+      "gaming",
+      "other",
+      "productivity",
+    ]
+    const awClients = ["aw-server", "aw-server-rust"]
+    const os = ["linux", "windows", "macos", "android", "ios"]
 
-   const promises = []
-   for (const date of dates) {
-    const jsonObj = JSON.parse(`{
+    const promises = []
+    for (const date of dates) {
+      const jsonObj = JSON.parse(`{
       "date": "${date}",
       "userId": "${userId}",
       "public": true,
       "events": [
         {
           "timestamp": ${
-            Date.parse(date) + Math.floor(Math.random() * 1000 * 60 * 60 * 24)
-          },
+  Date.parse(date) + Math.floor(Math.random() * 1000 * 60 * 60 * 24)
+},
           "duration": ${Math.floor(Math.random() * 100000)},
-          "category": "${
-            categories[Math.floor(Math.random() * categories.length)]
-          }",
+          "category": ["${categories[Math.floor(Math.random() * categories.length)]}"],
           "data": {
             "client": "${
-              awClients[Math.floor(Math.random() * awClients.length)]
-            }",
+  awClients[Math.floor(Math.random() * awClients.length)]
+}",
             "os": "${os[Math.floor(Math.random() * os.length)]}"
           }
         },
         {
           "timestamp": ${
-            Date.parse(date) + Math.floor(Math.random() * 1000 * 60 * 60 * 24)
-          },
+  Date.parse(date) + Math.floor(Math.random() * 1000 * 60 * 60 * 24)
+},
           "duration": ${Math.floor(Math.random() * 100000)},
-           "category": "${
-             categories[Math.floor(Math.random() * categories.length)]
-           }",
+          "category": ["${categories[Math.floor(Math.random() * categories.length)]}"],
           "data": {
             "client": "${
-              awClients[Math.floor(Math.random() * awClients.length)]
-            }",
+  awClients[Math.floor(Math.random() * awClients.length)]
+}",
             "os": "${os[Math.floor(Math.random() * os.length)]}"
           }
         }
       ]
       }`)
 
-      const promise = db.collection(colpath).doc(date).set(jsonObj)
+      const promise = db.collection(colpath)
+        .doc(date).set(jsonObj)
       promises.push(promise)
-   }
-  Promise.all(promises)
-   .then(() => {
-    info("successfully created fake data for user")
-   })
-   .catch(() => {
-    error("something went wrong creating fake data for user")
-   })
-})
+    }
+    Promise.all(promises)
+      .then(() => {
+        info("successfully created fake data for user")
+      })
+      .catch(() => {
+        error("something went wrong creating fake data for user")
+      })
+  })
 
 
 export const fakeLeaderboardData= onRequest((_, response) => {
@@ -175,7 +177,7 @@ export const UpdateLeaderboardData = onSchedule("every day 00:00", async () => {
   const batch = db.batch()
   const leaderboardColpath = "leaderboard"
   const screentimeColpath = "screentime"
-  
+
   // This is lightweight does not actually fetch the docs
   const screentimeDocRefs = await db.collection(screentimeColpath).listDocuments()
   const summariesMap = new Map<string, ScreenTimeSummary>()
@@ -202,7 +204,7 @@ export const UpdateLeaderboardData = onSchedule("every day 00:00", async () => {
     summariesMap.set(userId, summary)
     totalsMap.set(userId, summary.total)
     const sorted = new Map(
-      [...summariesMap.entries()].sort((a,b) => b[1].total - a[1].total)
+      [...summariesMap.entries()].sort((a, b) => b[1].total - a[1].total)
     )
     let rank = 1
     for (const [userId, summary] of sorted) {
@@ -330,30 +332,30 @@ exports.onUploadData = onObjectFinalized(
 
       let date = new Date(event.timestamp).toISOString().split("T")[0]
       date = date.replace(/\//g, "-")
-            if (dateMap.has(date)) {
-              dateMap.get(date)?.push(event)
-          } else {
-              dateMap.set(date, [event])
-          }
-    }
-      const dates = dateMap.entries()
-      for (const [date, events] of dates) {
-        const promise = db.collection(colpath).doc(date).get().then((doc) => {
-          if (doc.exists) {
-            const events = doc.data()?.events as Event[]
-            events.push(...events)
-            batch.update(doc.ref, {events: events})
-          } else {
-              batch.set(db.collection(colpath).doc(date), {
-              events: [...events],
-              userId: userId,
-              date: date,
-              public: true,
-            })
-          }
-        })
-        promises.push(promise)
+      if (dateMap.has(date)) {
+        dateMap.get(date)?.push(event)
+      } else {
+        dateMap.set(date, [event])
       }
+    }
+    const dates = dateMap.entries()
+    for (const [date, events] of dates) {
+      const promise = db.collection(colpath).doc(date).get().then((doc) => {
+        if (doc.exists) {
+          const events = doc.data()?.events as Event[]
+          events.push(...events)
+          batch.update(doc.ref, {events: events})
+        } else {
+          batch.set(db.collection(colpath).doc(date), {
+            events: [...events],
+            userId: userId,
+            date: date,
+            public: true,
+          })
+        }
+      })
+      promises.push(promise)
+    }
     await Promise.all(promises)
     await batch.commit()
     info("Data processed successfully")
