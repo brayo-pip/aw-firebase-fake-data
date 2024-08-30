@@ -1,6 +1,6 @@
 import {onRequest} from "firebase-functions/v2/https"
 import {onObjectFinalized} from "firebase-functions/v2/storage"
-import {onSchedule} from "firebase-functions/v2/scheduler"
+// import {onSchedule} from "firebase-functions/v2/scheduler"
 import * as admin from "firebase-admin"
 import * as functions from "firebase-functions"
 import * as genKey from "generate-api-key"
@@ -12,8 +12,8 @@ import {
 admin.initializeApp();
 let userId = "testUserId"
 
-export const createUsers = onRequest(async () => {
-  const users = 5
+export const createUsers = onRequest({timeoutSeconds: 540}, async () => {
+  const users = 100
   const promises = []
   for (let i = 0 ;i < users; i++) {
     const email = `user${i}@example.com`
@@ -26,7 +26,7 @@ export const createUsers = onRequest(async () => {
   await Promise.all(promises)
 })
 
-exports.onUserCreated = functions.auth.user().onCreate((user) => {
+exports.onUserCreated = functions.runWith({timeoutSeconds: 540}).auth.user().onCreate((user) => {
   info("User created: ", user.uid)
   const db = admin.firestore()
   const colpath = "users"
@@ -170,84 +170,78 @@ export const fakeLeaderboardData= onRequest((_, response) => {
       response.send("error\n")
     })
 })
+exports.updateLeaderboardData = functions
+  .runWith({ timeoutSeconds: 540, memory: "2GB" })
+  .pubsub.schedule("every day 00:00")
+  .onRun(async () => {
+    info("Updating leaderboard data");
+    const db = admin.firestore();
+    const batch = db.batch();
+    const leaderboardColpath = "leaderboard";
+    const screentimeColpath = "screentime";
 
-export const UpdateLeaderboardData = onSchedule("every day 00:00", async () => {
-  info("Updating leaderboard data")
-  const db = admin.firestore()
-  const batch = db.batch()
-  const leaderboardColpath = "leaderboard"
-  const screentimeColpath = "screentime"
+    try {
+      // List all screentime document references
+      const screentimeDocRefs = await db
+        .collection(screentimeColpath)
+        .listDocuments();
+      const summariesMap = new Map<string, ScreenTimeSummary>();
+      const totalsMap = new Map<string, number>();
 
-  // This is lightweight does not actually fetch the docs
-  const screentimeDocRefs = await db.collection(screentimeColpath).listDocuments()
-  const summariesMap = new Map<string, ScreenTimeSummary>()
-  const totalsMap = new Map<string, number>()
-  for (const docRef of screentimeDocRefs) {
-    const userId: string = docRef.id
-    const userDocRefs = await db
-      .collection(screentimeColpath + "/" + userId + "/" + userId)
-      .listDocuments()
-    const events: Event[] = []
-    for (const dayDocRef of userDocRefs) {
-      const dayDocData = (await dayDocRef.get()).data()
-      if (dayDocData?.events) {
-        events.push(...dayDocData.events)
+      // Process documents in parallel
+      await Promise.all(
+        screentimeDocRefs.map(async (docRef) => {
+          const userId: string = docRef.id;
+          const userDocRefs = await db
+            .collection(`${screentimeColpath}/${userId}/${userId}`)
+            .listDocuments();
+          const events: Event[] = [];
+
+          // Read user documents in parallel
+          const userDocs = await Promise.all(
+            userDocRefs.map((dayDocRef) => dayDocRef.get())
+          );
+          userDocs.forEach((dayDoc) => {
+            const dayDocData = dayDoc.data();
+            if (dayDocData?.events) {
+              events.push(...dayDocData.events);
+            }
+          });
+
+          const screenTimeData: ScreenTimeData = {
+            userId,
+            events,
+            date: new Date().toISOString().split("T")[0],
+            public: true,
+          };
+          const summary = dataToSummary(screenTimeData);
+          summariesMap.set(userId, summary);
+          totalsMap.set(userId, summary.total);
+        })
+      );
+
+      // Sort summaries map by total screen time
+      const sortedSummaries = new Map(
+        [...summariesMap.entries()].sort((a, b) => b[1].total - a[1].total)
+      );
+
+      // Update leaderboard with ranked summaries
+      let rank = 1;
+      for (const [userId, summary] of sortedSummaries) {
+        const rankedSummary: ScreenTimeSummaryRanked = {
+          ...summary,
+          rank: rank++,
+        };
+        batch.set(db.collection(leaderboardColpath).doc(userId), rankedSummary);
       }
+
+      // Commit batch
+      await batch.commit();
+      info("Leaderboard data updated successfully");
+    } catch (err) {
+      error("Error updating leaderboard data:", err);
     }
-    const screenTimeData: ScreenTimeData = {
-      userId,
-      events,
-      date: new Date().toISOString().split("T")[0],
-      public: true,
-    }
-    const summary = dataToSummary(screenTimeData)
-    summariesMap.set(userId, summary)
-    totalsMap.set(userId, summary.total)
-    const sorted = new Map(
-      [...summariesMap.entries()].sort((a, b) => b[1].total - a[1].total)
-    )
-    let rank = 1
-    for (const [userId, summary] of sorted) {
-      const rankedSummary: ScreenTimeSummaryRanked = {
-        ...summary,
-        rank: rank++,
-      }
-      batch.set(
-        db.collection(leaderboardColpath).doc(userId),
-        rankedSummary
-      )
-    }
-  }
-  try {
-    await batch.commit()
-    info("Leaderboard data updated successfully")
-  } catch (err) {
-    error(err)
-  }
-})
-export const getApiKey = functions.https.onCall(async (_, context) => {
-  /** A callable function only executed when the user is logged in */
-  info("Getting ApiKey")
-  info("Request data: ", context)
-  if (!context.auth) {
-    error("Not authenticated")
-    return {error: "Not authenticated"}
-  }
-  const db = admin.firestore()
-  const colpath = "users"
-  const docpath = context.auth?.uid
-  const docref = db.collection(colpath).doc(docpath)
-  const doc = await docref.get()
-  if (doc.exists && doc.data() && doc.data()?.apiKey) {
-    info("ApiKey found and sent to client")
-    return {apiKey: doc.data()?.apiKey}
-  } else {
-    const apiKey = genKey.generateApiKey()
-    await docref.set({apiKey: apiKey})
-    info("ApiKey set and sent to client")
-    return {apiKey: apiKey}
-  }
-})
+  })
 export const rotateApiKey = functions.https.onCall(async (_, context) => {
   /** A callable function only executed when the user is logged in */
   info("Rotating ApiKey")
